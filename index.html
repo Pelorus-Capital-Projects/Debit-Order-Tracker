@@ -106,7 +106,7 @@ main.wrap{max-width:668px}   /* same content width as the header on wide screens
 .sec-left{font-weight:700;font-size:15px;white-space:nowrap}
 
 .list{list-style:none;margin:0;padding:0}
-.row{display:grid;grid-template-columns:minmax(0,1fr) 46px;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--line-on-green);transition:background-color .2s ease}
+.row{display:grid;grid-template-columns:28px minmax(0,1fr) 46px;align-items:center;gap:4px;padding:4px 0;border-bottom:1px solid var(--line-on-green);transition:background-color .2s ease}
 .list .row:last-child{border-bottom-color:transparent}
 .row-open{display:flex;align-items:center;justify-content:space-between;gap:12px;border:0;background:none;color:var(--white);text-align:left;padding:10px 6px;min-width:0;border-radius:8px}
 .row-open:hover .nm{text-decoration:underline;text-decoration-color:var(--gold);text-underline-offset:3px}
@@ -120,6 +120,16 @@ main.wrap{max-width:668px}   /* same content width as the header on wide screens
 .row.is-done .row-open{color:var(--green-900)}
 .row.is-done .when{color:#6E5412}
 .row.is-done .tag{color:#6E5412;background:rgba(110,84,18,.12)}
+/* grip to drag a line up or down within its heading */
+.grip{width:28px;height:44px;display:grid;place-items:center;border:0;background:none;padding:0;margin-left:-4px;color:rgba(233,210,143,.7);cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;border-radius:6px}
+.grip svg{width:12px;height:20px;fill:currentColor;pointer-events:none}
+.grip:hover{color:var(--gold-soft)}
+.row.is-done .grip{color:rgba(14,59,46,.5)}
+.row.dragging{position:relative;z-index:6;background:#103F31;box-shadow:0 12px 26px rgba(0,0,0,.55), inset 0 0 0 1.5px var(--gold);border-radius:10px;transition:none}
+.row.dragging.is-done{background:#E8D49A}
+.row.dragging .grip{cursor:grabbing;color:var(--gold-soft)}
+.list.sorting .row:not(.dragging){transition:transform .16s ease}
+body.drag-active{-webkit-user-select:none;user-select:none;cursor:grabbing}
 .tick{width:42px;height:42px;border-radius:9px;border:2px solid rgba(255,255,255,.55);background:transparent;display:grid;place-items:center;justify-self:end;padding:0}
 .tick svg{width:24px;height:24px;stroke:var(--gold-soft);stroke-width:3;fill:none;opacity:0;transition:opacity .15s}
 .tick:hover svg{opacity:.4}
@@ -176,6 +186,10 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
 .field{display:flex;flex-direction:column;gap:5px}
 .field > span,.group-label{font-size:13px;font-weight:600;color:var(--muted)}
 .field input[type=text],.field input[type=password]{border:1px solid #CBD5CF;border-radius:8px;padding:10px;font-size:16px;background:var(--white);color:var(--ink);width:100%}
+.move-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.move-row[hidden]{display:none}
+.move-row > span{font-size:13px;font-weight:600;color:var(--muted);margin-right:auto}
+.move-row .b:disabled{opacity:.4}
 .choice{display:flex;flex-direction:column;gap:6px;border:0;margin:0;padding:0}
 .choice legend{font-size:13px;font-weight:600;color:var(--muted);padding:0;margin-bottom:5px}
 .choice label{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:10px 12px}
@@ -354,6 +368,10 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
         <label><input type="radio" name="repeat" value="every"><span>Every month<small>Comes back when you start the next month</small></span></label>
         <label><input type="radio" name="repeat" value="once"><span>This month only<small>For one-offs like a bonus or charter tips</small></span></label>
       </fieldset>
+      <div class="move-row" id="moveWrap"><span>Position</span>
+        <button type="button" class="b" id="moveUp">Move up</button>
+        <button type="button" class="b" id="moveDown">Move down</button>
+      </div>
     </div>
     <div class="dlg-foot">
       <button type="button" class="b b-danger" id="deleteItemBtn">Delete</button>
@@ -378,7 +396,7 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
 'use strict';
 
 /* ================= Config ================= */
-const APP_VERSION = '6.0';
+const APP_VERSION = '6.1';
 const STORE_KEY = 'debitOrders.app.v3';
 
 /* Starting figures from the Debit Orders spreadsheet, locked with the recovery code (see Sign-in below).
@@ -400,6 +418,7 @@ const PDF_LIBS = [
   'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js',
   'https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.9/dist/jspdf.plugin.autotable.min.js'
 ];
+const GRIP = '<svg viewBox="0 0 12 20" aria-hidden="true"><circle cx="3" cy="3" r="1.7"/><circle cx="9" cy="3" r="1.7"/><circle cx="3" cy="10" r="1.7"/><circle cx="9" cy="10" r="1.7"/><circle cx="3" cy="17" r="1.7"/><circle cx="9" cy="17" r="1.7"/></svg>';
 const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /* ================= Helpers ================= */
@@ -538,6 +557,7 @@ function rowHTML(it, s){
   const when = it.done ? `<span class="when">${s.dir === 'in' ? 'In' : 'Off'} ${esc(fmtDay(it.doneAt))}</span>` : '';
   const verb = s.dir === 'in' ? 'is in' : 'has come off';
   return `<li class="row${it.done ? ' is-done' : ''}" data-id="${esc(it.id)}">
+    <button type="button" class="grip" data-grip title="Drag to move" aria-label="Move ${esc(it.name)}. Drag, or use the up and down arrow keys">${GRIP}</button>
     <button type="button" class="row-open" data-act="edit" aria-label="${esc(it.name)}, ${esc(fmt(it.amount))}. Open to edit">
       <span class="who"><span class="nm">${esc(it.name)}</span>${tag}${when}</span>
       <span class="amt">${fmt(it.amount)}</span>
@@ -668,12 +688,26 @@ function openItem(id, secId){
   const once = f ? f.item.oneOff : false;
   document.querySelector(`input[name=repeat][value=${once ? 'once' : 'every'}]`).checked = true;
   $('deleteItemBtn').hidden = !f;
+  $('moveWrap').hidden = !f;
+  syncMoveButtons();
   $('itemSave').textContent = f ? 'Save' : 'Add';
   $('itemDlg').showModal();
   if (!f) $('fName').focus();
   else { const am = $('fAmount'); am.focus(); try { am.select(); } catch(_){} }
 }
 $('itemCancel').addEventListener('click', () => $('itemDlg').close());
+function syncMoveButtons(){
+  const f = editing && editing.id ? findItem(editing.id) : null;
+  $('moveUp').disabled = !f || f.index === 0;
+  $('moveDown').disabled = !f || f.index === cur().sections[f.sec].length - 1;
+}
+function moveFromDialog(step){
+  const f = findItem(editing.id); if (!f) return;
+  moveItemTo(f.sec, f.index, f.index + step);   // the list behind updates straight away
+  syncMoveButtons();
+}
+$('moveUp').addEventListener('click', () => moveFromDialog(-1));
+$('moveDown').addEventListener('click', () => moveFromDialog(1));
 $('itemForm').addEventListener('submit', e => {
   e.preventDefault();
   const name = $('fName').value.trim();
@@ -691,6 +725,83 @@ $('deleteItemBtn').addEventListener('click', async () => {
   const g = findItem(f.item.id); if (!g) return;
   cur().sections[g.sec].splice(g.index, 1);
   save(true); renderLists(); renderSummary(); toast('Deleted ' + f.item.name);
+});
+
+/* ================= Drag to reorder =================
+   Press the grip on the left of a line and drag it up or down within its heading.
+   Works with a finger or a mouse (pointer events); the page scrolls when you drag
+   near the top or bottom of the screen. The other lines slide out of the way while
+   you drag, and the new order is saved when you let go. Arrow keys on the grip, or
+   Move up / Move down in the edit window, do the same without dragging. */
+function moveItemTo(secId, from, to){
+  const arr = cur().sections[secId];
+  if (from === to || to < 0 || to >= arr.length) return false;
+  const [it] = arr.splice(from, 1); arr.splice(to, 0, it);
+  save(true); renderLists(); renderSummary();
+  return true;
+}
+let drag = null;
+lists.addEventListener('pointerdown', e => {
+  const grip = e.target.closest('[data-grip]'); if (!grip || drag) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  e.preventDefault();
+  const li = grip.closest('.row'), ul = li.parentElement, rows = [...ul.querySelectorAll('.row')];
+  const sy = window.scrollY, boxes = rows.map(r => r.getBoundingClientRect());
+  const idx = rows.indexOf(li), cs = getComputedStyle(li);
+  drag = {
+    li, ul, rows, idx, target: idx, pid: e.pointerId, grip,
+    sec: li.closest('section').dataset.sec,
+    mids: boxes.map(b => b.top + sy + b.height / 2),             // page positions, so scrolling while dragging works
+    startY: e.clientY + sy, y: e.clientY,
+    slot: boxes[idx].height + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom),
+    lo: boxes[0].top - boxes[idx].top - boxes[idx].height / 2,
+    hi: boxes[boxes.length - 1].bottom - boxes[idx].bottom + boxes[idx].height / 2
+  };
+  try { grip.setPointerCapture(e.pointerId); } catch(_){}
+  li.classList.add('dragging'); ul.classList.add('sorting'); document.body.classList.add('drag-active');
+  drag.raf = requestAnimationFrame(dragTick);
+});
+window.addEventListener('pointermove', e => { if (drag && e.pointerId === drag.pid) { drag.y = e.clientY; e.preventDefault(); } }, {passive: false});
+window.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.pid) endDrag(true); });
+window.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.pid) endDrag(false); });
+function dragTick(){
+  if (!drag) return;
+  const edge = 80, vh = window.innerHeight;                        // scroll when near the top or bottom
+  if (drag.y < edge) window.scrollBy(0, -Math.ceil((edge - drag.y) / 5));
+  else if (drag.y > vh - edge) window.scrollBy(0, Math.ceil((drag.y - (vh - edge)) / 5));
+  const d = drag, delta = Math.max(d.lo, Math.min(d.hi, d.y + window.scrollY - d.startY));
+  const centre = d.mids[d.idx] + delta;
+  let t = d.idx;
+  for (let i = 0; i < d.idx; i++) if (centre <= d.mids[i]) { t = i; break; }
+  for (let i = d.rows.length - 1; i > d.idx; i--) if (centre >= d.mids[i]) { t = i; break; }
+  d.target = t;
+  d.li.style.transform = `translateY(${delta}px)`;
+  d.rows.forEach((r, i) => {
+    if (i === d.idx) return;
+    const shift = (d.idx < t && i > d.idx && i <= t) ? -d.slot : (t < d.idx && i >= t && i < d.idx) ? d.slot : 0;
+    r.style.transform = shift ? `translateY(${shift}px)` : '';
+  });
+  d.raf = requestAnimationFrame(dragTick);
+}
+function endDrag(keep){
+  const d = drag; if (!d) return;
+  drag = null; cancelAnimationFrame(d.raf);
+  try { d.grip.releasePointerCapture(d.pid); } catch(_){}
+  document.body.classList.remove('drag-active');
+  d.rows.forEach(r => r.style.transform = '');
+  d.li.classList.remove('dragging'); d.ul.classList.remove('sorting');
+  if (keep && d.target !== d.idx && moveItemTo(d.sec, d.idx, d.target)) focusGrip(cur().sections[d.sec][d.target].id);
+}
+function focusGrip(id){
+  const g = document.querySelector(`.row[data-id="${CSS.escape(id)}"] .grip`);
+  if (g) g.focus({preventScroll: true});
+}
+lists.addEventListener('keydown', e => {
+  const grip = e.target.closest && e.target.closest('[data-grip]'); if (!grip) return;
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  e.preventDefault();
+  const f = findItem(grip.closest('.row').dataset.id); if (!f) return;
+  if (moveItemTo(f.sec, f.index, f.index + (e.key === 'ArrowUp' ? -1 : 1))) focusGrip(f.item.id);
 });
 
 /* ================= Profile ================= */
